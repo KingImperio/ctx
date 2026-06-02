@@ -26,25 +26,31 @@ function findFunctionLine(content, funcName) {
 
 function findDocstringEnd(content, startLine) {
   const lines = content.split('\n');
-  // Look for the function definition and check if it has a docstring
-  for (let i = startLine; i < Math.min(startLine + 5, lines.length); i++) {
-    if (lines[i].includes('"""') || lines[i].includes("'''")) {
-      const quote = lines[i].includes('"""') ? '"""' : "'''";
-      // Single-line docstring
-      const count = (lines[i].match(new RegExp(quote, 'g')) || []).length;
-      if (count >= 2) return i + 1; // single-line docstring
+  // First find the end of the function signature (the line with `):` or `-> str:`)
+  let sigEnd = startLine;
+  for (let i = startLine; i < Math.min(startLine + 10, lines.length); i++) {
+    if (lines[i].match(/\):?\s*->/)) { sigEnd = i; break; }
+    if (lines[i].match(/^\s+\):?\s*$/)) { sigEnd = i; break; }
+  }
+  // Now search for docstring starting from after the signature
+  for (let i = sigEnd + 1; i < Math.min(sigEnd + 5, lines.length); i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith('"""') || trimmed.startsWith("'''")) {
+      const quote = trimmed.startsWith('"""') ? '"""' : "'''";
+      // Single-line docstring (opens and closes on same line)
+      const afterOpen = trimmed.slice(trimmed.indexOf(quote) + 3);
+      if (afterOpen.includes(quote)) return i + 1;
       // Multi-line docstring — find closing
       for (let j = i + 1; j < lines.length; j++) {
         if (lines[j].includes(quote)) return j + 1;
       }
     }
-    // If we hit a non-empty, non-comment line before finding docstring, there's no docstring
-    const trimmed = lines[i].trim();
-    if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('def ') && !trimmed.startsWith(')') && !trimmed.startsWith('->')) {
+    // If we hit a non-empty, non-comment, non-blank line before finding docstring, there's no docstring
+    if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith(')')) {
       return i;
     }
   }
-  return startLine + 1;
+  return sigEnd + 2; // fallback: after signature + blank line
 }
 
 export async function patchHermes() {
