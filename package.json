@@ -1,0 +1,12 @@
+{
+  "name": "ctx",
+  "version": "0.1.0",
+  "description": "Universal Agent Resource Manager — shared skills, MCPs, and CLIs for AI agents",
+  "type": "module",
+  "bin": {
+    "ctx": "./src/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest"
+  }
+}
