@@ -3,6 +3,92 @@ import { mkdir, readdir, rename, symlink, unlink, writeFile, readFile, stat } fr
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
+
+async function loadMCPRegistry() {
+  const registryPath = join(HOME, '.ctx', 'mcps', 'registry.json');
+  if (!existsSync(registryPath)) return {};
+  try {
+    return JSON.parse(await readFile(registryPath, 'utf-8'));
+  } catch { return {}; }
+}
+
+async function patchOpenCodeWithRegistry() {
+  const configPath = join(HOME, '.config', 'opencode', 'opencode.jsonc');
+  if (!existsSync(configPath)) return [];
+  const results = [];
+  let content = await readFile(configPath, 'utf-8');
+  const registry = await loadMCPRegistry();
+
+  for (const [name, mcp] of Object.entries(registry)) {
+    if (content.includes(`"${name}"`)) continue;
+    // Find closing brace of mcp block
+    const mcpStart = content.indexOf('"mcp"');
+    if (mcpStart === -1) continue;
+    const openBrace = content.indexOf('{', mcpStart);
+    if (openBrace === -1) continue;
+    let depth = 0, closeBrace = -1;
+    for (let i = openBrace; i < content.length; i++) {
+      if (content[i] === '{') depth++;
+      if (content[i] === '}') { depth--; if (depth === 0) { closeBrace = i; break; } }
+    }
+    if (closeBrace === -1) continue;
+
+    const cmd = mcp.command || '';
+    const args = mcp.args || [];
+    const env = mcp.env || {};
+    const commandArray = JSON.stringify([cmd, ...args]);
+    const envBlock = Object.keys(env).length > 0
+      ? `,\n        "environment": ${JSON.stringify(env, null, 10)}`
+      : '';
+    const insert = `,\n    "${name}": {\n      "type": "local",\n      "command": ${commandArray}${envBlock},\n      "enabled": true\n    }`;
+
+    content = content.slice(0, closeBrace) + insert + content.slice(closeBrace);
+    results.push(`✓ Added ${name} to OpenCode config`);
+  }
+
+  if (results.length > 0) await writeFile(configPath, content);
+  return results;
+}
+
+async function patchHermesWithRegistry() {
+  // Hermes YAML is fragile to parse — only report missing MCPs, don't auto-patch
+  const configPath = join(HOME, '.hermes', 'config.yaml');
+  if (!existsSync(configPath)) return [];
+  const results = [];
+  const content = await readFile(configPath, 'utf-8');
+  const registry = await loadMCPRegistry();
+
+  for (const [name] of Object.entries(registry)) {
+    if (!content.includes(`  ${name}:`)) {
+      results.push(`→ ${name} not in Hermes config (add manually: ctx mcp add ${name} <command>)`);
+    }
+  }
+
+  return results;
+}
+
+async function patchOpenClaudeWithRegistry() {
+  const results = [];
+  const registry = await loadMCPRegistry();
+
+  for (const [name, mcp] of Object.entries(registry)) {
+    try {
+      const { execSync } = await import('child_process');
+      const stateRaw = await readFile(join(HOME, '.openclaude.json'), 'utf-8').catch(() => '{}');
+      const state = JSON.parse(stateRaw);
+      const projectMcps = state.projects?.[HOME]?.mcpServers || {};
+      if (projectMcps[name]) continue;
+
+      const cmd = mcp.command || '';
+      const args = mcp.args || [];
+      const cmdParts = [cmd, ...args].map(a => `"${a}"`).join(' ');
+      execSync(`openclaude mcp add --transport stdio ${name} -- ${cmdParts}`, { stdio: 'pipe' });
+      results.push(`✓ Added ${name} to OpenClaude`);
+    } catch {}
+  }
+
+  return results;
+}
 import { writeAgentsMD, tokenCount } from './prompt-builder.js';
 import { discover } from './discover.js';
 import { patchHermes } from './hermes-patch.js';
@@ -162,6 +248,14 @@ export async function runSetup() {
     results.push('→ OpenCode not found, skipping');
   }
 
+  // 5b. Push registered MCPs into OpenCode config
+  try {
+    const patchResults = await patchOpenCodeWithRegistry();
+    results.push(...patchResults);
+  } catch (err) {
+    results.push(`⚠ OpenCode registry sync failed: ${err.message}`);
+  }
+
   // 6. Patch OpenClaude — use `openclaude mcp add` (writes to ~/.openclaude.json, not settings.json)
   try {
     const { execSync } = await import('child_process');
@@ -183,6 +277,14 @@ export async function runSetup() {
     }
   } catch (err) {
     results.push(`⚠ Could not patch OpenClaude: ${err.message}`);
+  }
+
+  // 6c. Push registered MCPs into OpenClaude
+  try {
+    const patchResults = await patchOpenClaudeWithRegistry();
+    results.push(...patchResults);
+  } catch (err) {
+    results.push(`⚠ OpenClaude registry sync failed: ${err.message}`);
   }
 
   // 7. Patch Hermes
@@ -253,6 +355,14 @@ export async function runSetup() {
     }
   } else {
     results.push('→ Hermes not found, skipping');
+  }
+
+  // 6b. Push registered MCPs into Hermes config
+  try {
+    const patchResults = await patchHermesWithRegistry();
+    results.push(...patchResults);
+  } catch (err) {
+    results.push(`⚠ Hermes registry sync failed: ${err.message}`);
   }
 
   // 7b. Patch Hermes prompt builder to skip skills catalog (~4K tokens saved)
