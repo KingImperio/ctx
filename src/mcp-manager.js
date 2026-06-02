@@ -117,7 +117,7 @@ export class MCPManager {
     return name;
   }
 
-  // ─── Spawn with PID tracking ────────────────────────────────────
+  // ─── Spawn via daemon wrapper ───────────────────────────────────
 
   async spawn(name) {
     await this.loadRegistry();
@@ -144,48 +144,69 @@ export class MCPManager {
       await writeRunning(running);
     }
 
+    // Clean up stale FIFOs
+    await cleanupFIFO(name);
+
     const cmd = entry.command;
     const args = entry.args || [];
-    const env = { ...process.env, ...entry.env };
+    const daemonScript = join(new URL('.', import.meta.url).pathname, 'mcp-daemon.sh');
 
+    // Spawn daemon wrapper (detached, unref'd)
+    const daemonArgs = [daemonScript, name, cmd, ...args];
     let proc;
     try {
-      proc = spawn(cmd, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env,
+      proc = spawn('bash', daemonArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
       });
       proc.unref();
     } catch (err) {
-      throw new Error(`Failed to spawn MCP '${name}': ${err.message}`);
+      throw new Error(`Failed to spawn MCP daemon for '${name}': ${err.message}`);
     }
 
+    // Read PID from daemon stdout
+    const pidStr = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Daemon startup timeout')), 5000);
+      let buf = '';
+      proc.stdout.on('data', (chunk) => {
+        buf += chunk.toString();
+        const match = buf.match(/^(\d+)/);
+        if (match) {
+          clearTimeout(timeout);
+          resolve(match[1]);
+        }
+      });
+      proc.on('error', (err) => { clearTimeout(timeout); reject(err); });
+      proc.on('exit', (code) => {
+        if (!buf.match(/^\d+/)) {
+          clearTimeout(timeout);
+          reject(new Error(`Daemon exited with code ${code}`));
+        }
+      });
+    });
+
+    const mcpPid = parseInt(pidStr, 10);
+
     const state = {
-      process: proc,
+      process: { pid: mcpPid },
       lastUsed: Date.now(),
       timer: null,
       buffer: '',
       pending: null,
       idCounter: 0,
       initialized: false,
+      reqPath: fifoPath(name, 'req'),
+      resPath: fifoPath(name, 'res'),
+      resReader: null,
     };
 
-    proc.on('error', (err) => {
-      console.error(`[ctx] MCP '${name}' process error: ${err.message}`);
-      this.processes.delete(name);
-    });
+    // Read responses from the response FIFO
+    const { createReadStream } = await import('fs');
+    const resReader = createReadStream(state.resPath, { encoding: 'utf-8' });
+    state.resReader = resReader;
 
-    proc.on('exit', (code, signal) => {
-      if (state.timer) clearTimeout(state.timer);
-      this.processes.delete(name);
-      if (state.pending) {
-        state.pending.reject(new Error(`MCP '${name}' exited unexpectedly`));
-        state.pending = null;
-      }
-    });
-
-    proc.stdout.on('data', (chunk) => {
-      state.buffer += chunk.toString();
+    resReader.on('data', (chunk) => {
+      state.buffer += chunk;
       const lines = state.buffer.split('\n');
       state.buffer = lines.pop();
       for (const line of lines) {
@@ -201,16 +222,11 @@ export class MCPManager {
       }
     });
 
-    proc.stderr.on('data', (chunk) => {
-      const text = chunk.toString().trim();
-      if (text) console.error(`[ctx] MCP '${name}' stderr: ${text}`);
-    });
-
     this.processes.set(name, state);
 
     // Write PID to running.json
     running[name] = {
-      pid: proc.pid,
+      pid: mcpPid,
       startedAt: Date.now(),
       lastUsed: Date.now(),
       command: cmd,
@@ -219,7 +235,7 @@ export class MCPManager {
     await writeRunning(running);
 
     this.startInactivityTimer(name);
-    return proc;
+    return { pid: mcpPid };
   }
 
   startInactivityTimer(name) {

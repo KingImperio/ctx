@@ -3,6 +3,10 @@ import { mkdir, readdir, rename, symlink, unlink, writeFile, readFile, stat } fr
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
+import { writeAgentsMD, tokenCount } from './prompt-builder.js';
+import { discover } from './discover.js';
+import { patchHermes } from './hermes-patch.js';
+import { syncInit, isSyncInitialized } from './sync.js';
 
 const HOME = homedir();
 const CTX_DIR = join(HOME, '.ctx');
@@ -94,6 +98,19 @@ export async function runSetup() {
     results.push('✓ Populated default MCP registry (github, context7, playwright)');
   }
 
+  // 4b. Auto-discover and import from other agents
+  try {
+    const discoveryResult = await discover({ auto: true, dryRun: false });
+    const { skillsNew, skillsExisting, mcpsNew, mcpsExisting } = discoveryResult.report.summary;
+    if (skillsNew > 0 || mcpsNew > 0) {
+      results.push(`✓ Discovered ${skillsNew} new skills, ${mcpsNew} new MCPs from other agents`);
+    } else {
+      results.push('→ No new skills or MCPs discovered');
+    }
+  } catch (err) {
+    results.push(`⚠ Discovery failed: ${err.message}`);
+  }
+
   // 5. Patch OpenCode
   const opencodeConfig = join(HOME, '.config', 'opencode', 'opencode.jsonc');
   if (existsSync(opencodeConfig)) {
@@ -145,29 +162,27 @@ export async function runSetup() {
     results.push('→ OpenCode not found, skipping');
   }
 
-  // 6. Patch OpenClaude
-  const openclaudeConfig = join(HOME, '.openclaude', 'settings.json');
-  if (existsSync(openclaudeConfig)) {
+  // 6. Patch OpenClaude — use `openclaude mcp add` (writes to ~/.openclaude.json, not settings.json)
+  try {
+    const { execSync } = await import('child_process');
+    // Check if openclaude CLI is available
     try {
-      let content = await readFile(openclaudeConfig, 'utf-8');
-      const config = JSON.parse(content);
-      if (!config.mcpServers?.ctx) {
-        config.mcpServers = config.mcpServers || {};
-        config.mcpServers.ctx = {
-          command: 'ctx',
-          args: ['--mcp'],
-          env: {},
-        };
-        await writeFile(openclaudeConfig, JSON.stringify(config, null, 2));
-        results.push('✓ Patched OpenClaude config — added ctx MCP server');
+      execSync('which openclaude', { stdio: 'pipe' });
+      // Check if ctx is already registered
+      const stateRaw = await readFile(join(HOME, '.openclaude.json'), 'utf-8').catch(() => '{}');
+      const state = JSON.parse(stateRaw);
+      const projectMcps = state.projects?.[HOME]?.mcpServers || {};
+      if (!projectMcps.ctx) {
+        execSync('openclaude mcp add --transport stdio ctx -- ctx --mcp', { stdio: 'pipe' });
+        results.push('✓ Patched OpenClaude — registered ctx MCP via openclaude mcp add');
       } else {
         results.push('→ OpenClaude already has ctx configured');
       }
-    } catch (err) {
-      results.push(`⚠ Could not patch OpenClaude: ${err.message}`);
+    } catch {
+      results.push('→ OpenClaude CLI not found, skipping');
     }
-  } else {
-    results.push('→ OpenClaude not found, skipping');
+  } catch (err) {
+    results.push(`⚠ Could not patch OpenClaude: ${err.message}`);
   }
 
   // 7. Patch Hermes
@@ -240,32 +255,38 @@ export async function runSetup() {
     results.push('→ Hermes not found, skipping');
   }
 
-  // 8. Create AGENTS.md
-  const agentsMd = `# ctx — Universal Agent Resource Manager
+  // 7b. Patch Hermes prompt builder to skip skills catalog (~4K tokens saved)
+  try {
+    const hermesPatch = await patchHermes();
+    if (hermesPatch.patched) {
+      results.push('✓ Patched Hermes build_skills_system_prompt (saves ~4K tokens)');
+    } else {
+      results.push(`→ Hermes: ${hermesPatch.message}`);
+    }
+  } catch (err) {
+    results.push(`⚠ Hermes patch failed: ${err.message}`);
+  }
 
-You have access to the ctx tool for managing skills, MCPs, and CLIs.
+  // 8. Create AGENTS.md via prompt builder
+  try {
+    const agentsMd = await writeAgentsMD();
+    const approxTokens = tokenCount(agentsMd);
+    results.push(`✓ Created ~/.ctx/AGENTS.md (~${approxTokens} tokens)`);
+  } catch (err) {
+    results.push(`⚠ Could not create AGENTS.md: ${err.message}`);
+  }
 
-## Skills
-- Call \`ctx_skill_list\` first to see available skills (name + description only)
-- Call \`ctx_skill_get\` with a skill name to get full SKILL.md content
-- Never load skills directly from disk — always go through ctx
-
-## MCPs
-- Call \`ctx_mcp_use\` to spawn and use an MCP server
-- ctx handles spawning, lifecycle, and cleanup automatically
-- MCPs are killed after 2 minutes of inactivity
-- Never start MCP processes directly — always go through ctx
-
-## CLIs
-- Call \`ctx_cli_run\` to execute registered CLI tools
-- Returns structured output (stdout, stderr, exitCode)
-- Never shell out to CLIs directly — always go through ctx
-
-## Status
-- Call \`ctx_status\` to see full system overview
-`;
-  await writeFile(join(CTX_DIR, 'AGENTS.md'), agentsMd);
-  results.push('✓ Created ~/.ctx/AGENTS.md');
+  // 9. Initialize sync if not already done
+  try {
+    if (!(await isSyncInitialized())) {
+      await syncInit();
+      results.push('✓ Initialized git sync in ~/.ctx/');
+    } else {
+      results.push('→ Git sync already initialized');
+    }
+  } catch (err) {
+    results.push(`⚠ Sync init failed: ${err.message}`);
+  }
 
   return results;
 }

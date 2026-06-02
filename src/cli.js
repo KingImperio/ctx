@@ -3,6 +3,10 @@ import { SkillManager } from './skill-manager.js';
 import { MCPManager } from './mcp-manager.js';
 import { CLIManager } from './cli-manager.js';
 import { runSetup } from './setup.js';
+import { suggest, printSuggestions } from './suggest.js';
+import { discover, printDiscovery, watchDiscovery } from './discover.js';
+import { syncInit, syncPush, syncPull, syncStatus, printSyncStatus } from './sync.js';
+import { patchHermes, unpatchHermes, isHermesPatched } from './hermes-patch.js';
 
 const skillMgr = new SkillManager();
 const mcpMgr = new MCPManager();
@@ -29,6 +33,29 @@ export async function runCLI(args) {
     return;
   }
 
+  if (category === 'suggest') {
+    const task = [command, ...rest].filter(Boolean).join(' ');
+    if (!task) {
+      console.error('Usage: ctx suggest "<task description>"');
+      process.exit(1);
+    }
+    const results = await suggest(task);
+    printSuggestions(results);
+    return;
+  }
+
+  if (category === 'discover') {
+    if (command === '--watch' || command === 'watch') {
+      await watchDiscovery();
+      return;
+    }
+    const auto = rest.includes('--auto') || command === '--auto';
+    const dryRun = rest.includes('--dry-run') || command === '--dry-run' || !auto;
+    const result = await discover({ auto, dryRun });
+    printDiscovery(result);
+    return;
+  }
+
   switch (category) {
     case 'skill':
       await handleSkill(command, rest);
@@ -38,6 +65,12 @@ export async function runCLI(args) {
       break;
     case 'cli':
       await handleCLI(command, rest);
+      break;
+    case 'sync':
+      await handleSync(command, rest);
+      break;
+    case 'hermes':
+      await handleHermes(command, rest);
       break;
     default:
       console.error(`Unknown command: ${category}`);
@@ -68,8 +101,17 @@ async function handleSkill(cmd, args) {
       break;
     }
     case 'add': {
-      if (!args[0]) { console.error('Usage: ctx skill add <path>'); process.exit(1); }
-      const name = await skillMgr.add(args[0]);
+      const fileIdx = args.indexOf('--file');
+      const contentIdx = args.indexOf('--content');
+      const urlIdx = args.indexOf('--url');
+
+      const opts = {};
+      if (fileIdx !== -1) opts.file = args[fileIdx + 1];
+      if (contentIdx !== -1) opts.content = args[contentIdx + 1];
+      if (urlIdx !== -1) opts.url = args[urlIdx + 1];
+
+      const sourcePath = (!opts.file && !opts.content && !opts.url) ? args[0] : undefined;
+      const name = await skillMgr.add(sourcePath, opts);
       console.log(`✓ Added skill: ${name}`);
       break;
     }
@@ -116,9 +158,27 @@ async function handleMCP(cmd, args) {
       process.exit(0);
     }
     case 'add': {
-      if (args.length < 2) { console.error('Usage: ctx mcp add <name> <command> [args...]'); process.exit(1); }
+      if (args.length < 2) { console.error('Usage: ctx mcp add <name> <command> [args...] [--env KEY=VAL]'); process.exit(1); }
       const [name, command, ...rest] = args;
-      const name2 = await mcpMgr.add(name, command, rest, {}, '');
+      // Parse --env flags
+      const env = {};
+      const cmdArgs = [];
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i] === '--env' && rest[i + 1]) {
+          const [key, ...valParts] = rest[i + 1].split('=');
+          env[key] = valParts.join('=');
+          i++;
+        } else if (rest[i].startsWith('--env=')) {
+          const eqVal = rest[i].slice(6);
+          const [key, ...valParts] = eqVal.split('=');
+          env[key] = valParts.join('=');
+        } else {
+          cmdArgs.push(rest[i]);
+        }
+      }
+      const descIdx = args.indexOf('--description');
+      const description = descIdx !== -1 ? args[descIdx + 1] : '';
+      const name2 = await mcpMgr.add(name, command, cmdArgs, env, description);
       console.log(`✓ Added MCP: ${name2}`);
       break;
     }
@@ -187,9 +247,11 @@ async function handleCLI(cmd, args) {
       break;
     }
     case 'add': {
-      if (args.length < 2) { console.error('Usage: ctx cli add <name> <binary>'); process.exit(1); }
+      if (args.length < 2) { console.error('Usage: ctx cli add <name> <binary> [--description "..."]'); process.exit(1); }
       const [name, binary, ...rest] = args;
-      const name2 = await cliMgr.add(name, binary, rest.join(' '));
+      const descIdx = rest.indexOf('--description');
+      const description = descIdx !== -1 ? rest[descIdx + 1] : rest.filter((a, i) => i !== descIdx + 1).join(' ');
+      const name2 = await cliMgr.add(name, binary, description);
       console.log(`✓ Added CLI: ${name2}`);
       break;
     }
@@ -206,6 +268,62 @@ async function handleCLI(cmd, args) {
     default:
       console.error(`Unknown cli command: ${cmd}`);
       console.error('Usage: ctx cli <list|run|add|check>');
+      process.exit(1);
+  }
+}
+
+async function handleSync(cmd, args) {
+  switch (cmd) {
+    case 'init': {
+      const remoteUrl = args[0] || undefined;
+      const result = await syncInit(remoteUrl);
+      if (result.exitCode === 0) console.log(`✓ ${result.message}`);
+      else console.error(`✗ ${result.message}`);
+      break;
+    }
+    case 'push': {
+      const result = await syncPush();
+      console.log(result.message);
+      break;
+    }
+    case 'pull': {
+      const result = await syncPull();
+      if (result.exitCode === 0) console.log(result.stdout || 'Pulled successfully');
+      else console.error(result.stderr || 'Pull failed');
+      break;
+    }
+    case 'status': {
+      const status = await syncStatus();
+      printSyncStatus(status);
+      break;
+    }
+    default:
+      console.error(`Unknown sync command: ${cmd}`);
+      console.error('Usage: ctx sync <init|push|pull|status>');
+      process.exit(1);
+  }
+}
+
+async function handleHermes(cmd, args) {
+  switch (cmd) {
+    case 'patch': {
+      const result = await patchHermes();
+      console.log(result.message);
+      break;
+    }
+    case 'unpatch': {
+      const result = await unpatchHermes();
+      console.log(result.message);
+      break;
+    }
+    case 'status': {
+      const result = await isHermesPatched();
+      console.log(`Hermes prompt builder: ${result.message}`);
+      break;
+    }
+    default:
+      console.error(`Unknown hermes command: ${cmd}`);
+      console.error('Usage: ctx hermes <patch|unpatch|status>');
       process.exit(1);
   }
 }
@@ -251,6 +369,16 @@ USAGE:
 COMMANDS:
   setup                          Run once — patches agents, creates dirs, symlinks
   status                         Full overview: skills, MCPs, CLIs
+  suggest "<task>"               Find relevant skills, MCPs, and CLIs for a task
+  discover [--auto] [--dry-run]  Scan all agent configs for new skills/MCPs
+  discover --watch               Watch for new skills and auto-absorb
+  sync init [remote-url]         Initialize git sync in ~/.ctx/
+  sync push                      Push registries to remote
+  sync pull                      Pull registries from remote
+  sync status                    Show sync status
+  hermes patch                   Patch Hermes to skip skills catalog (~4K tokens saved)
+  hermes unpatch                 Restore Hermes prompt builder from backup
+  hermes status                  Check if Hermes is patched
 
   skill list                     List skills (name + description only)
   skill get <name>               Get full SKILL.md content

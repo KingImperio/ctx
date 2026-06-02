@@ -2,6 +2,10 @@
 import { SkillManager } from './skill-manager.js';
 import { MCPManager } from './mcp-manager.js';
 import { CLIManager } from './cli-manager.js';
+import { suggest } from './suggest.js';
+import { discover } from './discover.js';
+import { syncInit, syncPush, syncPull, syncStatus } from './sync.js';
+import { patchHermes, unpatchHermes, isHermesPatched } from './hermes-patch.js';
 
 const skillMgr = new SkillManager();
 const mcpMgr = new MCPManager();
@@ -51,6 +55,49 @@ const tools = [
     name: 'ctx_status',
     description: 'Get full system status: skills count, MCPs running, CLIs available.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'ctx_suggest',
+    description: 'Find relevant skills, MCPs, and CLIs for a task description.',
+    inputSchema: {
+      type: 'object',
+      properties: { task: { type: 'string', description: 'Natural language task description' } },
+      required: ['task'],
+    },
+  },
+  {
+    name: 'ctx_discover',
+    description: 'Scan agent configs for skills, MCPs, and plugins. Returns what exists, what is new, and what differs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        auto: { type: 'boolean', description: 'Auto-import new items (default false)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'ctx_sync',
+    description: 'Sync ctx registries with a git remote. Supports init, push, pull, status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['init', 'push', 'pull', 'status'], description: 'Sync action' },
+        remote: { type: 'string', description: 'Remote URL (for init)' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'ctx_hermes',
+    description: 'Manage Hermes prompt builder patch. Actions: patch, unpatch, status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['patch', 'unpatch', 'status'] },
+      },
+      required: ['action'],
+    },
   },
 ];
 
@@ -114,6 +161,39 @@ async function handleRequest(request) {
             },
           };
           return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+        }
+
+        case 'ctx_suggest': {
+          const results = await suggest(args.task);
+          return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+        }
+
+        case 'ctx_discover': {
+          const result = await discover({ auto: args.auto || false, dryRun: !args.auto });
+          return { content: [{ type: 'text', text: JSON.stringify(result.report, null, 2) }] };
+        }
+
+        case 'ctx_sync': {
+          let result;
+          switch (args.action) {
+            case 'init': result = await syncInit(args.remote); break;
+            case 'push': result = await syncPush(); break;
+            case 'pull': result = await syncPull(); break;
+            case 'status': result = await syncStatus(); break;
+            default: result = { exitCode: 1, message: `Unknown action: ${args.action}` };
+          }
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+
+        case 'ctx_hermes': {
+          let result;
+          switch (args.action) {
+            case 'patch': result = await patchHermes(); break;
+            case 'unpatch': result = await unpatchHermes(); break;
+            case 'status': result = await isHermesPatched(); break;
+            default: result = { message: `Unknown action: ${args.action}` };
+          }
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
 
         default:
