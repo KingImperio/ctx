@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { mkdir, readdir, rename, symlink, unlink, writeFile, readFile, stat } from 'fs/promises';
+import { mkdir, readdir, rename, symlink, unlink, writeFile, readFile, stat, lstat, rm } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
+import { execSync } from 'child_process';
 
 async function loadMCPRegistry() {
   const registryPath = join(HOME, '.ctx', 'mcps', 'registry.json');
@@ -73,7 +74,7 @@ async function patchOpenClaudeWithRegistry() {
 
   for (const [name, mcp] of Object.entries(registry)) {
     try {
-      const { execSync } = await import('child_process');
+      // execSync already imported at top level
       const stateRaw = await readFile(join(HOME, '.openclaude.json'), 'utf-8').catch(() => '{}');
       const state = JSON.parse(stateRaw);
       const projectMcps = state.projects?.[HOME]?.mcpServers || {};
@@ -116,7 +117,7 @@ export async function runSetup() {
   for (const dir of [CLAUDE_SKILLS, openclaudeSkills]) {
     if (existsSync(dir)) {
       try {
-        const st = await (await import('fs/promises')).lstat(dir);
+        const st = await lstat(dir);
         if (st.isSymbolicLink()) {
           await unlink(dir);
           results.push(`✓ Removed symlink ${dir} — skills must go through ctx`);
@@ -129,7 +130,7 @@ export async function runSetup() {
               try { await rename(src, dst); } catch {}
             }
           }
-          await (await import('fs/promises')).rm(dir, { recursive: true, force: true });
+          await rm(dir, { recursive: true, force: true });
           results.push(`✓ Migrated skills from ${dir} and removed directory`);
         }
       } catch (err) {
@@ -258,7 +259,7 @@ export async function runSetup() {
 
   // 6. Patch OpenClaude — use `openclaude mcp add` (writes to ~/.openclaude.json, not settings.json)
   try {
-    const { execSync } = await import('child_process');
+    // execSync already imported at top level
     // Check if openclaude CLI is available
     try {
       execSync('which openclaude', { stdio: 'pipe' });

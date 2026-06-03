@@ -29,6 +29,12 @@ export async function patchOpenClaude() {
     return { patched: false, message: 'CLAUDE.md already exists' };
   }
 
+  // Only create if ctx is installed (safety check)
+  const ctxDir = join(HOME, '.ctx');
+  if (!existsSync(ctxDir)) {
+    return { patched: false, message: 'ctx not installed — skipping CLAUDE.md creation' };
+  }
+
   await writeFile(CLAUDE_MD, CONTENT);
   return { patched: true, message: `Created ${CLAUDE_MD}` };
 }
