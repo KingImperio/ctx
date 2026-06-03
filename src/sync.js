@@ -38,6 +38,11 @@ ipc/
   await writeFile(gitignorePath, content);
 }
 
+function isValidGitUrl(url) {
+  // Allow: https://, http://, git://, ssh://, and user@host:path format
+  return /^(https?:\/\/|git:\/\/|ssh:\/\/|git@[\w.-]+:)/.test(url);
+}
+
 export async function syncInit(remoteUrl) {
   if (!existsSync(CTX_DIR)) {
     await mkdir(CTX_DIR, { recursive: true });
@@ -52,11 +57,14 @@ export async function syncInit(remoteUrl) {
   git('commit -m "ctx: initial registry snapshot"');
 
   if (remoteUrl) {
+    if (!isValidGitUrl(remoteUrl)) {
+      return { exitCode: 1, message: `Invalid git URL: ${remoteUrl}` };
+    }
     const existing = git('remote get-url origin');
     if (existing.exitCode === 0) {
-      git(`remote set-url origin ${remoteUrl}`);
+      git(`remote set-url origin "${remoteUrl}"`);
     } else {
-      git(`remote add origin ${remoteUrl}`);
+      git(`remote add origin "${remoteUrl}"`);
     }
     git('push -u origin HEAD');
   }

@@ -12,12 +12,15 @@ function normalize(text) {
   return text
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 4);
+    .filter((w) => w.length >= 2);
 }
 
 function scoreItem(queryWords, nameWords, descWords) {
   const descAndName = [...descWords, ...nameWords];
-  const matches = queryWords.filter((qw) => descAndName.some((dw) => dw.includes(qw) || qw.includes(dw)));
+  const matches = queryWords.filter((qw) => descAndName.some((dw) => {
+    // Word boundary match: query word must start or end at a word boundary
+    return dw === qw || dw.startsWith(qw) || qw.startsWith(dw);
+  }));
   if (matches.length === 0) return 0;
   return matches.length / Math.sqrt(descWords.length + nameWords.length);
 }
