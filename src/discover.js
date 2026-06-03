@@ -471,8 +471,8 @@ export async function discover({ auto = false, dryRun = false } = {}) {
       const content = await safeReadFile(skill.path);
       if (content) await writeFile(join(targetDir, 'SKILL.md'), content);
 
-      // Copy supporting files from the skill's parent directory
-      const skillDir = join(skill.path, '..');
+      // Copy supporting files from the skill's directory
+      const skillDir = skill.path.replace(/\/SKILL\.md$/, '');
       try {
         const siblings = await readdir(skillDir, { withFileTypes: true });
         for (const sib of siblings) {

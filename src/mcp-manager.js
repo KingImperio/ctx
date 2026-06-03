@@ -54,8 +54,8 @@ export class MCPManager {
     await mkdir(MCPS_DIR, { recursive: true });
     const tmp = this.registryFile + '.tmp';
     await writeFile(tmp, JSON.stringify(data, null, 2));
-    await writeFile(this.registryFile, await readFile(tmp));
-    try { await unlink(tmp); } catch {}
+    const { rename } = await import('fs/promises');
+    await rename(tmp, this.registryFile);
   }
 
   async saveRegistry() {
@@ -138,7 +138,7 @@ export class MCPManager {
 
     // Setup response buffer
     let buffer = '';
-    const pending = { id: null, resolve: null, reject: null };
+    const pendingMap = new Map(); // id → { resolve, reject }
     const idCounter = { value: 0 };
     let initialized = false;
 
@@ -151,9 +151,10 @@ export class MCPManager {
         if (!trimmed) continue;
         try {
           const msg = JSON.parse(trimmed);
-          if (pending.id !== null && msg.id === pending.id) {
+          if (msg.id && pendingMap.has(msg.id)) {
+            const pending = pendingMap.get(msg.id);
+            pendingMap.delete(msg.id);
             pending.resolve(msg);
-            pending.id = null;
           }
         } catch {}
       }
@@ -174,7 +175,7 @@ export class MCPManager {
       lastUsed: Date.now(),
       timer: null,
       buffer: '',
-      pending,
+      pendingMap,
       idCounter,
       initialized: false,
     };
@@ -242,28 +243,29 @@ export class MCPManager {
   _sendAndWait(state, request) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        state.pending.id = null;
+        state.pendingMap.delete(request.id);
         reject(new Error(`MCP handshake timed out after 15s`));
       }, 15000);
 
-      state.pending.id = request.id;
-      state.pending.resolve = (msg) => {
-        clearTimeout(timeout);
-        if (msg.error) {
-          reject(new Error(`MCP init error: ${msg.error.message || JSON.stringify(msg.error)}`));
-        } else {
-          resolve(msg.result);
-        }
-      };
-      state.pending.reject = (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      };
+      state.pendingMap.set(request.id, {
+        resolve: (msg) => {
+          clearTimeout(timeout);
+          if (msg.error) {
+            reject(new Error(`MCP init error: ${msg.error.message || JSON.stringify(msg.error)}`));
+          } else {
+            resolve(msg.result);
+          }
+        },
+        reject: (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        },
+      });
 
       try {
         state.proc.stdin.write(JSON.stringify(request) + '\n');
       } catch (err) {
-        state.pending.id = null;
+        state.pendingMap.delete(request.id);
         clearTimeout(timeout);
         reject(new Error(`Failed to write to MCP: ${err.message}`));
       }
@@ -314,28 +316,29 @@ export class MCPManager {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        state.pending.id = null;
+        state.pendingMap.delete(id);
         reject(new Error(`MCP '${name}' call timed out after 30s`));
       }, 30000);
 
-      state.pending.id = id;
-      state.pending.resolve = (msg) => {
-        clearTimeout(timeout);
-        if (msg.error) {
-          reject(new Error(`MCP error: ${msg.error.message || JSON.stringify(msg.error)}`));
-        } else {
-          resolve(msg.result);
-        }
-      };
-      state.pending.reject = (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      };
+      state.pendingMap.set(id, {
+        resolve: (msg) => {
+          clearTimeout(timeout);
+          if (msg.error) {
+            reject(new Error(`MCP error: ${msg.error.message || JSON.stringify(msg.error)}`));
+          } else {
+            resolve(msg.result);
+          }
+        },
+        reject: (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        },
+      });
 
       try {
         state.proc.stdin.write(JSON.stringify(request) + '\n');
       } catch (err) {
-        state.pending.id = null;
+        state.pendingMap.delete(id);
         clearTimeout(timeout);
         reject(new Error(`Failed to write to MCP '${name}': ${err.message}`));
       }

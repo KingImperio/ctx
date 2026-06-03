@@ -3,14 +3,14 @@ import { existsSync } from 'fs';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 const HOME = homedir();
 const CTX_DIR = join(HOME, '.ctx');
 
-function git(args, opts = {}) {
+function git(args) {
   try {
-    const stdout = execSync(`git ${args}`, { cwd: CTX_DIR, encoding: 'utf-8', timeout: 30000, ...opts });
+    const stdout = execFileSync('git', args, { cwd: CTX_DIR, encoding: 'utf-8', timeout: 30000 });
     return { stdout: stdout.trim(), exitCode: 0 };
   } catch (err) {
     return { stdout: '', stderr: err.stderr?.trim() || err.message, exitCode: err.status || 1 };
