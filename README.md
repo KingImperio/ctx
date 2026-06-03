@@ -171,6 +171,27 @@ Patches `build_skills_system_prompt()` to return `""` — saves ~4K tokens per H
 
 Works on Termux with no native dependencies. Desktop-only MCPs (Playwright, etc.) fail gracefully. Skills, CLIs, and suggest work fully.
 
-## License
+## Known Issues
 
-MIT
+**HIGH:**
+- **mcp-manager.js:145** — Buffer grows without bound. `proc.stdout.on('data')` appends to `buffer` without size limit. If an MCP server sends a large response without a trailing newline, or sends continuous output, the buffer grows unbounded, eventually causing OOM. Fix: add a max buffer size check (e.g., 10MB) and reject/kill if exceeded.
+- **setup.js:117** — Lost skills during migration. The migration loop tries `await rename(src, dst)` for each entry. If two source directories have entries with the same name, the second `rename` fails silently (caught by empty `try/catch`). Skills from the second source are silently lost. Fix: log the failure or copy instead of rename to preserve both.
+- **mcp-server.js:305** — Unbounded buffer on stdin. The MCP server's stdin handler appends to `buffer` without limit. A malicious or buggy client could send data without newlines to exhaust memory. Fix: add a max buffer size check.
+
+**MEDIUM:**
+- **mcp-server.js:320** — Silent JSON parse failures. `catch { continue; }` drops malformed JSON silently. Should log for debugging.
+- **skill-manager.js:64** — fetch() with no timeout. `await fetch(url)` has no timeout. A slow or unresponsive URL hangs the skill add operation indefinitely. Fix: add AbortController with a timeout (e.g., 30 seconds).
+- **prompt-builder.js:70** — Empty catch in writeAgentsMD. `catch {}` silently swallows file read errors. If the file exists but is unreadable (permissions), it proceeds to overwrite.
+- **setup.js:27** — patchOpenCodeWithRegistry brace-counting fragile. Brace-counting to find JSON closing brace is thrown off by braces inside string values (e.g., `"command": "echo {test}"`). The parser counts `{` and `}` inside strings as structural braces. Fix: use a proper JSONC parser (already available in discover.js as `parseJSONC`).
+- **openclaude-patch.js:49** — Fragile ownership check. `content.includes('ctx_suggest')` to check if CLAUDE.md is "ours". Another tool referencing ctx_suggest would cause this to incorrectly skip removal.
+- **mcp-manager.js:167** — _removeFromRunning not awaited in exit handler. The `proc.on('exit')` handler calls `this._removeFromRunning(name)` without `await`. Since `_removeFromRunning` is async (does file I/O), the cleanup may not complete before the process exits. Running.json could retain stale PID entries. Fix: make the exit handler async or queue the cleanup.
+- **discover.js:475** — Sibling copy bug. `join(skill.path, '..')` resolves to the parent of the SKILL.md file. If `skill.path` is `/home/user/.claude/skills/my-skill/SKILL.md`, `skillDir` becomes `/home/user/.claude/skills/`. The subsequent `readdir(skillDir)` reads ALL sibling skills' files, not just the target skill's supporting files. Fix: use `dirname(skill.path)` instead of `join(skill.path, '..')`.
+
+**LOW:**
+- **cli-manager.js:2** — `stat` import unused.
+- **discover.js:2** — `copyFile` import unused.
+- **discover.js:3** — `relative` import unused.
+- **hermes-patch.js:3** — `access` import unused.
+- **setup.js:2** — `stat` import unused.
+- **sync.js:3** — `readFile` import unused.
+- **hermes-patch.js:9** — find traverses entire home directory. `find ~ -path "*/hermes*/prompt_builder.py"` traverses the entire home directory tree, including sensitive directories. On a large home directory, this hits the 10-second timeout. Also runs on every `patchHermes()` call. Fix: use known paths like `~/.hermes/` or `~/.local/lib/` instead of `find ~`.
