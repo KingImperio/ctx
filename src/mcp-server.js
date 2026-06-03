@@ -66,6 +66,20 @@ const tools = [
     },
   },
   {
+    name: 'ctx_tool_brief',
+    description: 'List all available tools with one-line descriptions. Use this first to discover what tools exist, then ctx_tool_inspect for full schema.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'ctx_tool_inspect',
+    description: 'Get the full JSON schema for a specific tool. Use after ctx_tool_brief to get details before calling a tool.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Tool name (e.g. ctx_skill_get, github:create_issue)' } },
+      required: ['name'],
+    },
+  },
+  {
     name: 'ctx_discover',
     description: 'Scan agent configs for skills, MCPs, and plugins. Returns what exists, what is new, and what differs.',
     inputSchema: {
@@ -166,6 +180,69 @@ async function handleRequest(request) {
         case 'ctx_suggest': {
           const results = await suggest(args.task);
           return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+        }
+
+        case 'ctx_tool_brief': {
+          // Get brief tool list from all registered MCPs
+          const allTools = [];
+          const mcps = await mcpMgr.list();
+          for (const mcp of mcps) {
+            try {
+              const result = await mcpMgr.call(mcp.name, 'tools/list', {});
+              const tools = result?.tools || [];
+              for (const t of tools) {
+                allTools.push({
+                  server: mcp.name,
+                  name: t.name,
+                  description: t.description || '',
+                });
+              }
+            } catch {}
+          }
+          // Add ctx's own tools
+          const ownTools = [
+            { server: 'ctx', name: 'ctx_suggest', description: 'Find relevant tools for a task' },
+            { server: 'ctx', name: 'ctx_tool_brief', description: 'List all tools with one-line descriptions' },
+            { server: 'ctx', name: 'ctx_tool_inspect', description: 'Get full JSON schema for a tool' },
+            { server: 'ctx', name: 'ctx_skill_list', description: 'List registered skills' },
+            { server: 'ctx', name: 'ctx_skill_get', description: 'Load full skill content by name' },
+            { server: 'ctx', name: 'ctx_mcp_use', description: 'Spawn and call an MCP server' },
+            { server: 'ctx', name: 'ctx_cli_run', description: 'Execute a CLI tool' },
+            { server: 'ctx', name: 'ctx_discover', description: 'Scan for new skills/MCPs' },
+            { server: 'ctx', name: 'ctx_sync', description: 'Sync registries to/from git remote' },
+            { server: 'ctx', name: 'ctx_status', description: 'System overview' },
+          ];
+          allTools.push(...ownTools);
+          return { content: [{ type: 'text', text: JSON.stringify({ tools: allTools, count: allTools.length }, null, 2) }] };
+        }
+
+        case 'ctx_tool_inspect': {
+          // Find full schema for a specific tool
+          const toolName = args.name;
+          let found = null;
+
+          // Check ctx's own tools first
+          const ownToolDefs = await import('./mcp-server.js');
+          // We can't self-reference, so check the tools array from list_tools
+          // Instead, search MCPs
+          const mcpsForInspect = await mcpMgr.list();
+          for (const mcp of mcpsForInspect) {
+            try {
+              const result = await mcpMgr.call(mcp.name, 'tools/list', {});
+              const tools = result?.tools || [];
+              const match = tools.find((t) => t.name === toolName || `${mcp.name}:${t.name}` === toolName);
+              if (match) {
+                found = { server: mcp.name, ...match };
+                break;
+              }
+            } catch {}
+          }
+
+          if (!found) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: `Tool '${toolName}' not found in any registered MCP server` }) }] };
+          }
+
+          return { content: [{ type: 'text', text: JSON.stringify(found, null, 2) }] };
         }
 
         case 'ctx_discover': {
