@@ -229,9 +229,13 @@ export async function discoverSkills() {
       const pkgs = await readdir(packagesDir, { withFileTypes: true });
       for (const pkg of pkgs) {
         if (!pkg.isDirectory()) continue;
-        // Check package root for skills
+        // Check package root for skills (recursive — skills may be in subdirs)
         const pkgSkillsDir = join(packagesDir, pkg.name, 'skills');
-        await scanDir(pkgSkillsDir, `plugin:${pkg.name}`);
+        await scanDir(pkgSkillsDir, `plugin:${pkg.name}`, true);
+
+        // Check packages/shared-skills/skills/ at package root
+        const pkgSharedSkills = join(packagesDir, pkg.name, 'packages', 'shared-skills', 'skills');
+        await scanDir(pkgSharedSkills, `plugin:${pkg.name}`, true);
 
         // Check nested node_modules for .opencode/skills
         const nmDir = join(packagesDir, pkg.name, 'node_modules');
@@ -241,9 +245,13 @@ export async function discoverSkills() {
             for (const mod of modules) {
               if (!mod.isDirectory()) continue;
               const omoSkills = join(nmDir, mod.name, '.opencode', 'skills');
-              await scanDir(omoSkills, `plugin:${pkg.name}/${mod.name}`);
+              await scanDir(omoSkills, `plugin:${pkg.name}/${mod.name}`, true);
 
-              // Also check packages/*/plugin/skills/ (oh-my-openagent pattern)
+              // Check .agents/skills/ (oh-my-openagent internal skills)
+              const agentsSkills = join(nmDir, mod.name, '.agents', 'skills');
+              await scanDir(agentsSkills, `plugin:${pkg.name}/${mod.name}`, true);
+
+              // Also check packages/*/plugin/skills/ and packages/shared-skills/skills/
               const pluginSkills = join(nmDir, mod.name, 'packages');
               if (await fileExists(pluginSkills)) {
                 try {
@@ -251,7 +259,10 @@ export async function discoverSkills() {
                   for (const sp of subPkgs) {
                     if (!sp.isDirectory()) continue;
                     const spSkills = join(pluginSkills, sp.name, 'plugin', 'skills');
-                    await scanDir(spSkills, `plugin:${pkg.name}/${mod.name}/${sp.name}`);
+                    await scanDir(spSkills, `plugin:${pkg.name}/${mod.name}/${sp.name}`, true);
+                    // Also check packages/*/skills/ (shared-skills pattern)
+                    const sharedSkills = join(pluginSkills, sp.name, 'skills');
+                    await scanDir(sharedSkills, `plugin:${pkg.name}/${mod.name}/${sp.name}`, true);
                   }
                 } catch {}
               }
