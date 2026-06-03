@@ -3,21 +3,6 @@ import { readdir, readFile, writeFile, mkdir, rename, unlink, rm, stat, symlink 
 import { join, basename } from 'path';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
-import { tmpdir } from 'os';
-
-// Extract description from SKILL.md content
-function extractSkillDescription(content) {
-  if (!content) return '(no description)';
-  const fmMatch = content.match(/^---\s*\n[\s\S]*?description:\s*(.+?)\n[\s\S]*?---/);
-  if (fmMatch) return fmMatch[1].trim().slice(0, 120);
-  const lines = content.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('---')) continue;
-    return trimmed.slice(0, 120);
-  }
-  return '(no description)';
-}
 
 // Extract name from SKILL.md content or filename
 function extractSkillName(content, fallback) {

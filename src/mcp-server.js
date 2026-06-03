@@ -221,10 +221,7 @@ async function handleRequest(request) {
           const toolName = args.name;
           let found = null;
 
-          // Check ctx's own tools first
-          const ownToolDefs = await import('./mcp-server.js');
-          // We can't self-reference, so check the tools array from list_tools
-          // Instead, search MCPs
+          // Search MCPs for the tool
           const mcpsForInspect = await mcpMgr.list();
           for (const mcp of mcpsForInspect) {
             try {
@@ -286,24 +283,15 @@ async function handleRequest(request) {
 // MCP Server using stdio JSON-RPC
 export async function startMCPServer() {
   let buffer = '';
+  const messageQueue = [];
+  let processing = false;
 
-  process.stdin.setEncoding('utf-8');
-  process.stdin.on('data', async (chunk) => {
-    buffer += chunk;
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
+  async function processNext() {
+    if (processing || messageQueue.length === 0) return;
+    processing = true;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      let request;
-      try {
-        request = JSON.parse(trimmed);
-      } catch {
-        continue;
-      }
-
+    while (messageQueue.length > 0) {
+      const request = messageQueue.shift();
       const response = { jsonrpc: '2.0', id: request.id };
       try {
         response.result = await handleRequest(request);
@@ -313,6 +301,26 @@ export async function startMCPServer() {
 
       process.stdout.write(JSON.stringify(response) + '\n');
     }
+
+    processing = false;
+    if (messageQueue.length > 0) processNext();
+  }
+
+  process.stdin.setEncoding('utf-8');
+  process.stdin.on('data', (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        messageQueue.push(JSON.parse(trimmed));
+      } catch { continue; }
+    }
+
+    processNext();
   });
 
   process.stdin.on('end', () => process.exit(0));

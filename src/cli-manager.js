@@ -90,7 +90,7 @@ export class CLIManager {
     }
   }
 
-  async run(name, args = []) {
+  async run(name, args = [], timeoutMs = 60000) {
     await this.loadRegistry();
     const entry = this.registry.get(name);
     if (!entry) throw new Error(`CLI '${name}' not registered`);
@@ -108,6 +108,12 @@ export class CLIManager {
         env: process.env,
       });
 
+      const timer = setTimeout(() => {
+        proc.kill('SIGTERM');
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
+        reject(new Error(`CLI '${name}' timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+
       let stdout = '';
       let stderr = '';
 
@@ -115,6 +121,7 @@ export class CLIManager {
       proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
       proc.on('close', (code) => {
+        clearTimeout(timer);
         resolve({
           tool: name,
           binary: entry.binary,

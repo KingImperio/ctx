@@ -41,7 +41,7 @@ async function safeStat(path) {
 
 // Simple JSONC parser — strip comments and trailing commas
 function parseJSONC(text) {
-  // Strip single-line comments (not inside strings)
+  // Strip comments (single-line and block) not inside strings
   let result = '';
   let inString = false;
   let escape = false;
@@ -53,6 +53,12 @@ function parseJSONC(text) {
     if (!inString && ch === '/' && text[i + 1] === '/') {
       while (i < text.length && text[i] !== '\n') i++;
       result += '\n';
+      continue;
+    }
+    if (!inString && ch === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++; // skip closing /
       continue;
     }
     result += ch;
@@ -458,13 +464,40 @@ export async function discover({ auto = false, dryRun = false } = {}) {
       const targetDir = join(SKILLS_DIR, skill.name);
       if (existsSync(targetDir)) continue;
 
-      // Read the source file
-      const content = await safeReadFile(skill.path);
-      if (!content) continue;
-
-      // Create skill dir and write SKILL.md
+      // Create skill dir
       await mkdir(targetDir, { recursive: true });
-      await writeFile(join(targetDir, 'SKILL.md'), content);
+
+      // Copy SKILL.md
+      const content = await safeReadFile(skill.path);
+      if (content) await writeFile(join(targetDir, 'SKILL.md'), content);
+
+      // Copy supporting files from the skill's parent directory
+      const skillDir = join(skill.path, '..');
+      try {
+        const siblings = await readdir(skillDir, { withFileTypes: true });
+        for (const sib of siblings) {
+          if (sib.name === 'SKILL.md' || sib.name === '.' || sib.name === '..') continue;
+          const sibPath = join(skillDir, sib.name);
+          const destPath = join(targetDir, sib.name);
+          if (sib.isDirectory()) {
+            // Copy subdirectories recursively
+            await mkdir(destPath, { recursive: true });
+            try {
+              const subFiles = await readdir(sibPath, { withFileTypes: true });
+              for (const sf of subFiles) {
+                if (sf.isFile()) {
+                  const sfContent = await safeReadFile(join(sibPath, sf.name));
+                  if (sfContent) await writeFile(join(destPath, sf.name), sfContent);
+                }
+              }
+            } catch {}
+          } else if (sib.isFile()) {
+            const sibContent = await safeReadFile(sibPath);
+            if (sibContent) await writeFile(destPath, sibContent);
+          }
+        }
+      } catch {}
+
       imported.push(skill.name);
     } catch {}
   }
