@@ -9,7 +9,7 @@ const CLAUDE_MD = join(HOME, 'CLAUDE.md');
 const CTX_AGENTS_MD = join(HOME, '.ctx', 'AGENTS.md');
 
 const CONTENT = `# CLAUDE.md — ctx Integration
-
+# ctx-managed
 This project uses ctx (Universal Agent Resource Manager).
 
 Before every task, use the ctx tools to find relevant skills, MCPs, and CLIs:
@@ -44,9 +44,9 @@ export async function unpatchOpenClaude() {
     return { restored: false, message: 'No CLAUDE.md found' };
   }
 
-  // Only remove if it's our content
+  // Only remove if it's our content (check unique marker, not fragile content match)
   const content = await readFile(CLAUDE_MD, 'utf-8');
-  if (!content.includes('ctx_suggest')) {
+  if (!content.includes('# ctx-managed')) {
     return { restored: false, message: 'CLAUDE.md exists but is not ours — not removing' };
   }
 

@@ -40,7 +40,7 @@ async function safeStat(path) {
 }
 
 // Simple JSONC parser — strip comments and trailing commas
-function parseJSONC(text) {
+export function parseJSONC(text) {
   // Strip comments (single-line and block) not inside strings
   let result = '';
   let inString = false;

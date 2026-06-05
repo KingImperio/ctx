@@ -17,37 +17,37 @@ async function patchOpenCodeWithRegistry() {
   const configPath = join(HOME, '.config', 'opencode', 'opencode.jsonc');
   if (!existsSync(configPath)) return [];
   const results = [];
-  let content = await readFile(configPath, 'utf-8');
+  const raw = await readFile(configPath, 'utf-8');
   const registry = await loadMCPRegistry();
 
+  let config;
+  try {
+    config = parseJSONC(raw);
+  } catch {
+    return [];
+  }
+
+  if (!config.mcp || typeof config.mcp !== 'object') return [];
+
+  let modified = false;
   for (const [name, mcp] of Object.entries(registry)) {
-    if (content.includes(`"${name}"`)) continue;
-    // Find closing brace of mcp block
-    const mcpStart = content.indexOf('"mcp"');
-    if (mcpStart === -1) continue;
-    const openBrace = content.indexOf('{', mcpStart);
-    if (openBrace === -1) continue;
-    let depth = 0, closeBrace = -1;
-    for (let i = openBrace; i < content.length; i++) {
-      if (content[i] === '{') depth++;
-      if (content[i] === '}') { depth--; if (depth === 0) { closeBrace = i; break; } }
-    }
-    if (closeBrace === -1) continue;
+    if (config.mcp[name]) continue;
 
     const cmd = mcp.command || '';
     const args = mcp.args || [];
     const env = mcp.env || {};
-    const commandArray = JSON.stringify([cmd, ...args]);
-    const envBlock = Object.keys(env).length > 0
-      ? `,\n        "environment": ${JSON.stringify(env, null, 10)}`
-      : '';
-    const insert = `,\n    "${name}": {\n      "type": "local",\n      "command": ${commandArray}${envBlock},\n      "enabled": true\n    }`;
 
-    content = content.slice(0, closeBrace) + insert + content.slice(closeBrace);
+    config.mcp[name] = {
+      type: 'local',
+      command: [cmd, ...args],
+      ...(Object.keys(env).length > 0 ? { environment: env } : {}),
+      enabled: true,
+    };
     results.push(`✓ Added ${name} to OpenCode config`);
+    modified = true;
   }
 
-  if (results.length > 0) await writeFile(configPath, content);
+  if (modified) await writeFile(configPath, JSON.stringify(config, null, 2));
   return results;
 }
 
@@ -91,7 +91,7 @@ async function patchOpenClaudeWithRegistry() {
   return results;
 }
 import { writeAgentsMD, tokenCount } from './prompt-builder.js';
-import { discover } from './discover.js';
+import { discover, parseJSONC } from './discover.js';
 import { patchHermes } from './hermes-patch.js';
 import { syncInit, isSyncInitialized } from './sync.js';
 
