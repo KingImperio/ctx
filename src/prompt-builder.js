@@ -67,7 +67,10 @@ export async function writeAgentsMD() {
   try {
     const existing = await readFile(filePath, 'utf-8');
     if (existing === content) return content;
-  } catch {}
+  } catch (err) {
+    // File doesn't exist or is unreadable — proceed with write
+    if (err.code !== 'ENOENT') console.error(`[ctx] Warning: could not read AGENTS.md: ${err.message}`);
+  }
 
   // Atomic write
   const tmpPath = filePath + '.tmp';

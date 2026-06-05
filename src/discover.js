@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { readdir, readFile, writeFile, mkdir, copyFile, stat, access } from 'fs/promises';
-import { join, basename, relative } from 'path';
+import { readdir, readFile, writeFile, mkdir, stat, access } from 'fs/promises';
+import { join, basename } from 'path';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { createHash } from 'crypto';

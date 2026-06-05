@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from 'fs';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { execFileSync } from 'child_process';

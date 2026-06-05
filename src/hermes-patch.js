@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 import { execSync } from 'child_process';
-import { readFile, writeFile, copyFile, access } from 'fs/promises';
+import { readFile, writeFile, copyFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
 function findPromptBuilder() {
-  try {
-    const result = execSync('find ~ -path "*/hermes*/prompt_builder.py" 2>/dev/null | head -1', {
-      encoding: 'utf-8',
-      timeout: 10000,
-    }).trim();
-    return result || null;
-  } catch {
-    return null;
+  const knownPaths = [
+    join(homedir(), '.hermes', 'prompt_builder.py'),
+    join(homedir(), '.local', 'lib', 'hermes', 'prompt_builder.py'),
+  ];
+  for (const p of knownPaths) {
+    try {
+      if (existsSync(p)) return p;
+    } catch {}
   }
+  return null;
 }
 
 function findFunctionLine(content, funcName) {

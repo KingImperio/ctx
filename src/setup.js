@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir, readdir, rename, symlink, unlink, writeFile, readFile, stat, lstat, rm } from 'fs/promises';
+import { mkdir, readdir, rename, symlink, unlink, writeFile, readFile, lstat, rm } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
@@ -127,7 +127,17 @@ export async function runSetup() {
             const src = join(dir, entry);
             const dst = join(SKILLS_DIR, entry);
             if (!existsSync(dst)) {
-              try { await rename(src, dst); } catch {}
+              try {
+                await rename(src, dst);
+              } catch (err) {
+                try {
+                  const { cp } = await import('fs/promises');
+                  await cp(src, dst, { recursive: true });
+                  await rm(src, { recursive: true, force: true });
+                } catch (copyErr) {
+                  results.push(`⚠ Could not migrate ${entry} from ${dir}: ${copyErr.message}`);
+                }
+              }
             }
           }
           await rm(dir, { recursive: true, force: true });

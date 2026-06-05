@@ -142,8 +142,16 @@ export class MCPManager {
     const idCounter = { value: 0 };
     let initialized = false;
 
+    const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB
     proc.stdout.on('data', (chunk) => {
       buffer += chunk.toString();
+      if (buffer.length > MAX_BUFFER_SIZE) {
+        console.error(`[ctx] MCP '${name}' buffer exceeded 10MB limit, killing process`);
+        try { proc.kill('SIGTERM'); } catch {}
+        this.processes.delete(name);
+        this._removeFromRunning(name);
+        return;
+      }
       const lines = buffer.split('\n');
       buffer = lines.pop();
       for (const line of lines) {
@@ -165,9 +173,9 @@ export class MCPManager {
       this.processes.delete(name);
     });
 
-    proc.on('exit', (code) => {
+    proc.on('exit', () => {
       this.processes.delete(name);
-      this._removeFromRunning(name);
+      this._removeFromRunning(name).catch(() => {});
     });
 
     const state = {

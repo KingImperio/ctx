@@ -306,9 +306,14 @@ export async function startMCPServer() {
     if (messageQueue.length > 0) processNext();
   }
 
+  const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB
   process.stdin.setEncoding('utf-8');
   process.stdin.on('data', (chunk) => {
     buffer += chunk;
+    if (buffer.length > MAX_BUFFER_SIZE) {
+      console.error('[ctx] stdin buffer exceeded 10MB limit, exiting');
+      process.exit(1);
+    }
     const lines = buffer.split('\n');
     buffer = lines.pop();
 
@@ -317,7 +322,10 @@ export async function startMCPServer() {
       if (!trimmed) continue;
       try {
         messageQueue.push(JSON.parse(trimmed));
-      } catch { continue; }
+      } catch (err) {
+        console.error(`[ctx] Failed to parse JSON-RPC message: ${err.message}`);
+        continue;
+      }
     }
 
     processNext();

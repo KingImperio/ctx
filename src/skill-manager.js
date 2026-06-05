@@ -61,7 +61,10 @@ export class SkillManager {
     let name = '';
 
     if (url) {
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
       if (!response.ok) throw new Error(`Failed to fetch: ${response.statusText}`);
       skillContent = await response.text();
       const urlPath = new URL(url).pathname;
