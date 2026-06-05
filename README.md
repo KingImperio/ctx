@@ -173,8 +173,4 @@ Works on Termux with no native dependencies. Desktop-only MCPs (Playwright, etc.
 
 ## Known Issues
 
-All HIGH and MEDIUM issues fixed as of 2026-06-05.
-
-**Remaining LOW:**
-- **setup.js:27** — patchOpenCodeWithRegistry brace-counting fragile. Brace-counting to find JSON closing brace is thrown off by braces inside string values. Fix: use a proper JSONC parser.
-- **openclaude-patch.js:49** — Fragile ownership check. `content.includes('ctx_suggest')` to check if CLAUDE.md is "ours". Another tool referencing ctx_suggest would cause this to incorrectly skip removal.
+All issues fixed as of 2026-06-05. See git history for details.
